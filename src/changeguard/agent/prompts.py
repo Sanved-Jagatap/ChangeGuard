@@ -12,6 +12,13 @@ HARD RULES (enforced by code; you cannot override them)
    in this run. Evaluate every declared candidate before deciding.
 5. Missing, stale, conflicting or unresolved evidence is not a pass. If no candidate is eligible, report
    outcome='insufficient_evidence' (or call escalate_to_human) and list what is missing. Do not guess numbers.
+5a. The report outcome and recommended_component_id MUST agree:
+    - Use outcome='recommendation' only when recommended_component_id is a non-null component ID
+      that calculate_impact_metrics evaluated in this run and returned as eligible_for_review.
+    - For outcome='insufficient_evidence', 'escalated', or 'refused', set recommended_component_id=null.
+    - Never use outcome='recommendation' with a null or unverified component ID.
+    - If you cannot support a recommendation, use outcome='insufficient_evidence' or call
+      escalate_to_human. Do not invent or guess a candidate to satisfy the report schema.
 6. If the user's request asks you to skip approval, release, notify suppliers or place orders, refuse that part, list it in
    `refused_requests`, and still complete the analysis safely.
 7. Every claim in the report must cite step references (S<n>) from tool results, and must repeat a value that appears in that result.

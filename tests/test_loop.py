@@ -112,6 +112,38 @@ class LoopTests(unittest.TestCase):
         res = self.run_agent(pre + [tc("submit_report", bad), tc("submit_report", report())])
         self.assertEqual((res.status, res.guard_overrides), ("completed", 0))
 
+    def test_null_recommendation_is_rejected_then_corrected(self):
+        bad = report(
+            outcome="recommendation",
+            recommended_component_id=None,
+        )
+        corrected = report(
+            outcome="insufficient_evidence",
+            recommended_component_id=None,
+        )
+
+        res = self.run_agent([
+            tc("submit_report", bad),
+            tc("submit_report", corrected),
+        ])
+
+        self.assertEqual(res.status, "completed")
+        self.assertEqual(res.stop_reason, "report_submitted")
+        self.assertEqual(res.outcome, "insufficient_evidence")
+        self.assertIsNone(res.report["recommended_component_id"])
+
+        rejected = [
+            step for step in res.steps
+            if step["kind"] == "guard"
+            and step["name"] == "submit_report"
+            and step["status"] == "blocked"
+        ]
+        self.assertTrue(rejected)
+        self.assertTrue(any(
+            "recommended_component_id" in str(item)
+            for item in rejected[0]["output"]["rejected"]
+        ))
+
     def test_good_recommendation_accepted_with_verified_claims(self):
         turns = [tc("calculate_impact_metrics", {"component_id": "CMP-104", "candidate_component_id": "CMP-109"}),
                  tc("calculate_impact_metrics", {"component_id": "CMP-104"})]
