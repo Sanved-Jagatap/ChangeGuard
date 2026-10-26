@@ -1,0 +1,15 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.db-journal
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+/data/
+benchmarks/results/*.json
+!benchmarks/results/.gitkeep
+.DS_Store
+*.bak

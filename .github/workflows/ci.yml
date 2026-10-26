@@ -1,0 +1,32 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: { python: ["3.11", "3.12"] }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ matrix.python }}" }
+      - run: pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check .
+      - name: Unit and safety tests
+        run: python -m pytest -q
+      - name: Benchmark regression gate (offline, deterministic)
+        run: |
+          changeguard bench --runner baseline --min-success 0.95 --out /tmp/baseline.json
+          changeguard bench --runner agent --provider mock --min-success 0.95 --out /tmp/agent_mock.json
+          changeguard bench --runner agent --provider mock_gullible --families ADV,NRM --out /tmp/gullible.json
+      - name: Dataset is up to date
+        run: |
+          changeguard bench-generate --out /tmp/ds.json
+          python - <<'PY'
+          import json
+          a = json.load(open("/tmp/ds.json"))["dataset_hash"]
+          b = json.load(open("benchmarks/changeguard_bench_v1.json"))["dataset_hash"]
+          assert a == b, "benchmark dataset changed: run `changeguard bench-generate` and commit"
+          PY

@@ -1,0 +1,45 @@
+# Local full stack: Postgres + API + UI.  Start with:  docker compose up --build
+# Postgres is published on host port 5434 (not 5432/5433) so it does not clash with other local databases.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: cg_admin
+      POSTGRES_PASSWORD: cg_admin_dev
+      POSTGRES_DB: changeguard
+    ports: ["5434:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cg_admin -d changeguard"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      CG_DATABASE_URL: postgresql://cg_admin:cg_admin_dev@db:5432/changeguard
+      CG_DATABASE_URL_READER: postgresql://cg_reader:cg_reader_dev@db:5432/changeguard
+      CG_DATABASE_URL_RECORDER: postgresql://cg_recorder:cg_recorder_dev@db:5432/changeguard
+      CG_DATABASE_URL_SANDBOX: postgresql://cg_sandbox:cg_sandbox_dev@db:5432/changeguard
+      CG_LLM_PROVIDER: ${CG_LLM_PROVIDER:-mock}
+      CG_LLM_MODEL: ${CG_LLM_MODEL:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      CG_DEMO_TOKENS: ${CG_DEMO_TOKENS:-analyst1:analyst:change-me-analyst,reviewer1:reviewer:change-me-reviewer,admin1:admin:change-me-admin}
+      CG_ANONYMOUS_ROLE: ${CG_ANONYMOUS_ROLE:-viewer}
+      CG_ALLOW_RESET: ${CG_ALLOW_RESET:-0}
+    ports: ["8000:8000"]
+
+  ui:
+    build: .
+    depends_on: [api]
+    command: ["streamlit", "run", "src/changeguard/ui/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    environment:
+      CG_API_URL: http://api:8000
+    ports: ["8501:8501"]
+
+volumes:
+  pgdata:

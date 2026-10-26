@@ -1,0 +1,23 @@
+# OPTIONAL. Runs the held-out + smoke benchmark against a real hosted model and uploads the result file.
+# Needs repository secret GEMINI_API_KEY and variable CG_LLM_MODEL. Watch your provider's quota and billing.
+name: nightly-real-model
+on:
+  workflow_dispatch:
+  schedule: [{ cron: "0 3 * * *" }]
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e .
+      - name: Run held-out split with a real model
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CG_LLM_PROVIDER: gemini
+          CG_LLM_MODEL: ${{ vars.CG_LLM_MODEL }}
+        run: changeguard bench --runner agent --provider gemini --model "$CG_LLM_MODEL" --subset heldout --sleep 6 --resume --out results.json
+      - uses: actions/upload-artifact@v4
+        with: { name: real-model-results, path: results.json }
