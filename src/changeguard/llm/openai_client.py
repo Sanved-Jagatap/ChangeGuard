@@ -33,7 +33,7 @@ class OpenAIClient(LLMClient):
                 msgs.append({"role": "tool", "tool_call_id": m["tool_call_id"], "content": m["content"]})
             else:
                 msgs.append({"role": m["role"], "content": m["content"]})
-        body = {"model": self.model, "messages": msgs, "tool_choice": "required",
+        body: dict[str, object] = {"model": self.model, "messages": msgs, "tool_choice": "required",
                 "tools": [{"type": "function", "function": {"name": t["name"], "description": t["description"],
                                                             "parameters": t["parameters"]}} for t in tools]}
         temp = os.environ.get("CG_LLM_TEMPERATURE")

@@ -58,9 +58,17 @@ def where_used(conn: Conn, component_id: str, depth_limit: int = 8) -> dict:
                 r["qty_per_unit"] += new_qty
                 r["path_count"] += 1
             stack.append((parent, new_path, new_qty))
-    kinds = {}
+    kinds: dict[str, dict] = {}
     for pid in affected:
-        c = conn.query_one("SELECT description, kind FROM components WHERE component_id = ?", (pid,))
+        c = conn.query_one(
+            "SELECT description, kind FROM components WHERE component_id = ?",
+            (pid,),
+        )
+        if c is None:
+            raise ToolError(
+                "data_integrity",
+                f"BOM references missing component {pid}",
+            )
         kinds[pid] = c
     affected_list = []
     for pid, info in sorted(affected.items()):

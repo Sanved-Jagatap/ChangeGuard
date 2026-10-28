@@ -30,7 +30,12 @@ PUBLISHED = Path(__file__).resolve().parents[3] / "benchmarks" / "published"
 async def lifespan(_app: FastAPI):
     service.db.migrate()
     with service.db.connect("admin") as c:
-        empty = c.query_one("SELECT COUNT(*) AS n FROM components")["n"] == 0
+        row = c.query_one("SELECT COUNT(*) AS n FROM components")
+    if row is None:
+        raise RuntimeError(
+            "Unable to determine whether the components table is empty; API startup aborted."
+        )
+    empty = row["n"] == 0
     if empty:
         from ..seed import build_seed, load_seed
         with service.db.connect("admin") as c:
@@ -45,7 +50,8 @@ class _RateLimiter:
     """Tiny in-memory per-IP limiter for the expensive endpoint (single-process demo use)."""
 
     def __init__(self, n: int, per: float):
-        self.n, self.per, self.hits = n, per, defaultdict(deque)
+        self.n, self.per = n, per
+        self.hits: defaultdict[str, deque[float]] = defaultdict(deque)
 
     def check(self, key: str) -> None:
         now, q = time.time(), self.hits[key]

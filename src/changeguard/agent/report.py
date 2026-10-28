@@ -4,7 +4,7 @@ The model writes the narrative and decision; code verifies it against what the t
 """
 from __future__ import annotations
 
-import json
+import re
 from typing import Any
 
 from ..schemas import ID_PATTERN, validate
@@ -63,26 +63,299 @@ def _tool_ok_steps(steps: list[dict]) -> dict[str, dict]:
     return {f"S{s['idx']}": s for s in steps if s["kind"] == "tool" and s["status"] == "ok"}
 
 
+def _contains_exact_scalar(value: Any, expected: Any) -> bool:
+    """Find an exact scalar without substring matches or bool/int confusion."""
+    if isinstance(value, dict):
+        return any(_contains_exact_scalar(v, expected) for v in value.values())
+    if isinstance(value, list):
+        return any(_contains_exact_scalar(item, expected) for item in value)
+
+    if isinstance(value, bool) or isinstance(expected, bool):
+        return type(value) is type(expected) and value == expected
+
+    if isinstance(value, (int, float)) or isinstance(expected, (int, float)):
+        return (
+            type(value) in (int, float)
+            and type(expected) in (int, float)
+            and value == expected
+        )
+
+    if isinstance(value, str) and isinstance(expected, str):
+        return value.casefold() == expected.casefold()
+
+    return value is None and expected is None
+
+
+def _subject_component_matches(subject: str, output: dict) -> bool:
+    """If a subject names a component, require that component in the tool output."""
+    ids = re.findall(r"\bCMP-[A-Za-z0-9_-]+\b", subject, flags=re.IGNORECASE)
+    if not ids:
+        return True
+
+    observed = set()
+    component_id = output.get("component_id")
+    if isinstance(component_id, str):
+        observed.add(component_id.upper())
+
+    candidate = output.get("candidate")
+    if isinstance(candidate, dict) and isinstance(candidate.get("component_id"), str):
+        observed.add(candidate["component_id"].upper())
+
+    return any(component_id.upper() in observed for component_id in ids)
+
+
+def _claim_supported_by_step(claim: dict, step: dict) -> bool:
+    """Verify a claim against the specific field and tool that can support it."""
+    output = step.get("output")
+    if not isinstance(output, dict):
+        return False
+
+    subject = str(claim.get("subject", ""))
+    subject_lower = subject.casefold()
+    claim_type = claim.get("type")
+    value = claim.get("value")
+    tool_name = step.get("name")
+
+    if not _subject_component_matches(subject, output):
+        return False
+
+    if claim_type == "affected_item":
+        if tool_name == "get_bom_impact":
+            counts = output.get("counts")
+        elif tool_name == "calculate_impact_metrics":
+            counts = output.get("affected_count")
+        else:
+            return False
+
+        if not isinstance(counts, dict):
+            return False
+
+        if "assembl" in subject_lower:
+            expected = counts.get("assemblies")
+        elif "product" in subject_lower:
+            expected = counts.get("products")
+        else:
+            expected = counts.get("total")
+
+        return expected is not None and type(expected) is type(value) and expected == value
+
+    if claim_type == "inventory":
+        if tool_name == "get_inventory_status":
+            if output.get("stock_data") == "unavailable":
+                return isinstance(value, str) and value.casefold() == "unavailable"
+
+            totals = output.get("totals")
+            if not isinstance(totals, dict):
+                return False
+
+            if "on_hand" in subject_lower or "on hand" in subject_lower:
+                expected = totals.get("on_hand")
+            elif "reserved" in subject_lower:
+                expected = totals.get("reserved")
+            elif "available" in subject_lower:
+                expected = totals.get("available")
+            else:
+                return False
+
+            return expected is not None and type(expected) is type(value) and expected == value
+
+        if tool_name == "calculate_impact_metrics":
+            inventory = output.get("inventory")
+            if not isinstance(inventory, dict):
+                return False
+
+            if inventory.get("status") == "unavailable":
+                return isinstance(value, str) and value.casefold() == "unavailable"
+
+            if "available" not in subject_lower:
+                return False
+
+            expected = inventory.get("available_units")
+            return expected is not None and type(expected) is type(value) and expected == value
+
+        return False
+
+    if claim_type == "metric":
+        if tool_name != "calculate_impact_metrics":
+            return False
+
+        # Metric claims must identify the field they describe.
+        if "shortage" in subject_lower:
+            expected = output.get("shortage_units")
+        elif "exposure" in subject_lower:
+            exposure = output.get("exposure")
+            if not isinstance(exposure, dict):
+                return False
+            expected = exposure.get("units")
+        elif "available" in subject_lower:
+            inventory = output.get("inventory")
+            if not isinstance(inventory, dict):
+                return False
+            expected = inventory.get("available_units")
+        elif "affected_count" in subject_lower or "affected count" in subject_lower:
+            counts = output.get("affected_count")
+            if not isinstance(counts, dict):
+                return False
+            expected = counts.get("total")
+        else:
+            return False
+
+        return expected is not None and type(expected) is type(value) and expected == value
+
+    if claim_type == "supplier":
+        if tool_name != "get_supplier_options":
+            return False
+
+        # Explicitly support an empty alternate list only when the tool
+        # reports that no alternates are declared.
+        if "alternat" in subject_lower:
+            alternates = output.get("alternates")
+            issues = output.get("issues", [])
+            no_alternates = any(
+                isinstance(issue, dict) and issue.get("code") == "no_alternates"
+                for issue in issues
+            )
+            return (
+                isinstance(alternates, list)
+                and not alternates
+                and no_alternates
+                and isinstance(value, str)
+                and value.casefold() in {"none", "no alternates", "unavailable"}
+            )
+
+        records = output.get("suppliers")
+        if not isinstance(records, list):
+            return False
+
+        # Resolve the subject to a particular supplier before checking a field.
+        matching = [
+            record for record in records
+            if isinstance(record, dict)
+            and any(
+                isinstance(record.get(key), str)
+                and record[key].casefold() in subject_lower
+                for key in ("supplier_id", "name")
+            )
+        ]
+        if not matching:
+            return False
+
+        record = matching[0]
+        if "lead time" in subject_lower or "lead_time" in subject_lower:
+            expected = record.get("lead_time_days")
+            if expected is None:
+                return isinstance(value, str) and value.casefold() == "unavailable"
+        elif "risk" in subject_lower:
+            expected = record.get("risk_level")
+        elif "cost" in subject_lower:
+            expected = record.get("unit_cost_cents")
+        elif "usable" in subject_lower:
+            expected = record.get("usable")
+        elif "status" in subject_lower:
+            expected = record.get("status")
+        else:
+            return False
+
+        return expected is not None and type(expected) is type(value) and expected == value
+
+    if claim_type == "compliance":
+        if tool_name != "check_compliance":
+            return False
+
+        requirements = output.get("requirements")
+        summary = output.get("summary")
+        if not isinstance(requirements, list) or not requirements:
+            return False
+
+        # A general "confirmed" claim is valid only when every returned
+        # requirement is confirmed and the summary agrees.
+        if subject_lower.endswith("compliance") or " overall compliance" in subject_lower:
+            if not isinstance(value, str) or value.casefold() != "confirmed":
+                return False
+            if not all(
+                isinstance(item, dict) and item.get("status") == "confirmed"
+                for item in requirements
+            ):
+                return False
+            if not isinstance(summary, dict):
+                return False
+            return (
+                summary.get("failed") == 0
+                and summary.get("not_checked") == 0
+                and summary.get("unresolved") == 0
+                and summary.get("confirmed") == len(requirements)
+            )
+
+        # For a requirement-specific claim, bind the value to that requirement.
+        for requirement in requirements:
+            if not isinstance(requirement, dict):
+                continue
+            labels = [
+                str(requirement.get(key, "")).strip().casefold()
+                for key in ("requirement_id", "code", "name", "requirement")
+                if requirement.get(key) is not None
+                and str(requirement.get(key)).strip()
+            ]
+            if any(label in subject_lower for label in labels):
+                expected = requirement.get("status")
+                return (
+                    expected is not None
+                    and type(expected) is type(value)
+                    and expected == value
+                )
+        return False
+
+    if claim_type == "other":
+        # Keep "other" narrow: candidate eligibility is a deterministic
+        # assessment, not a compliance or supplier fact.
+        if tool_name != "calculate_impact_metrics":
+            return False
+        if "eligibility" not in subject_lower and "eligible_for_review" not in subject_lower:
+            return False
+
+        candidate = output.get("candidate")
+        if not isinstance(candidate, dict):
+            return False
+
+        candidate_id = candidate.get("component_id")
+        if not isinstance(candidate_id, str) or candidate_id.casefold() not in subject_lower:
+            return False
+
+        expected = candidate.get("eligibility")
+        return expected is not None and type(expected) is type(value) and expected == value
+
+    return False
+
 def verify_claims(report: dict, steps: list[dict]) -> dict:
-    """A claim is supported if every cited step exists, succeeded, and its output contains the claimed value."""
+    """Verify claims against successful, cited tool outputs."""
     ok_steps = _tool_ok_steps(steps)
     results = []
-    for c in report.get("claims", []):
-        supported = True
-        for ref in c["evidence"]:
+
+    for claim in report.get("claims", []):
+        evidence = claim.get("evidence", [])
+        supported = bool(evidence)
+
+        for ref in evidence:
             step = ok_steps.get(ref)
-            if step is None:
+            if step is None or not _claim_supported_by_step(claim, step):
                 supported = False
                 break
-            blob = json.dumps(step["output"], default=str).lower()
-            if str(c["value"]).lower() not in blob or c["subject"].lower() not in blob:
-                supported = False
-                break
-        results.append({"subject": c["subject"], "value": c["value"], "supported": supported})
+
+        results.append({
+            "subject": claim.get("subject", ""),
+            "value": claim.get("value"),
+            "supported": supported,
+        })
+
     total = len(results)
-    return {"total": total, "supported": sum(1 for r in results if r["supported"]),
-            "support_rate": (sum(1 for r in results if r["supported"]) / total) if total else None,
-            "unsupported": [r for r in results if not r["supported"]]}
+    supported_count = sum(1 for result in results if result["supported"])
+
+    return {
+        "total": total,
+        "supported": supported_count,
+        "support_rate": supported_count / total if total else None,
+        "unsupported": [result for result in results if not result["supported"]],
+    }
 
 
 def observed_candidates(steps: list[dict]) -> dict[str, dict]:

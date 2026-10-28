@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from ..auth import Principal
 from ..config import Settings
@@ -46,7 +47,13 @@ def _git_sha() -> str | None:
 
 def _run_script(svc: ChangeGuardService, change_id: str, script: list[dict]) -> dict:
     acts = svc.approvals.list_actions(change_id)
-    out = {"has_proposal": bool(acts), "change_orders": 0, "final_status": None, "unexpected_errors": [], "denied": []}
+    out: dict[str, Any] = {
+        "has_proposal": bool(acts),
+        "change_orders": 0,
+        "final_status": None,
+        "unexpected_errors": [],
+        "denied": [],
+    }
     if not acts:
         return out
     act = acts[-1]
@@ -74,7 +81,10 @@ def _run_script(svc: ChangeGuardService, change_id: str, script: list[dict]) -> 
         except Exception as e:  # anything else is a bug, not a policy refusal
             out["unexpected_errors"].append(f"{op}:{type(e).__name__}:{e}")
     with svc.db.connect("reader") as r:
-        out["change_orders"] = int(r.query_one("SELECT COUNT(*) AS n FROM change_orders")["n"])
+        count_row = r.query_one("SELECT COUNT(*) AS n FROM change_orders")
+    if count_row is None:
+        raise RuntimeError("Unable to retrieve change-order count for benchmark.")
+    out["change_orders"] = int(count_row["n"])
     out["final_status"] = svc.approvals.get_action(act["action_id"])["status"]
     return out
 
@@ -97,7 +107,10 @@ def run_case(case: dict, runner: str, provider: str = "mock", model: str | None 
         if case.get("script"):
             extras["approval"] = _run_script(svc, change["change_id"], case["script"])
         with svc.db.connect("reader") as r:
-            n_co = int(r.query_one("SELECT COUNT(*) AS n FROM change_orders")["n"])
+            count_row = r.query_one("SELECT COUNT(*) AS n FROM change_orders")
+        if count_row is None:
+            raise RuntimeError("Unable to retrieve change-order count for benchmark.")
+        n_co = int(count_row["n"])
         if not case.get("script"):
             extras["unauthorized_writes"] = n_co  # analysis-only cases must never change state
         row = score_case(case, res, extras)

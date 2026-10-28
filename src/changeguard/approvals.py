@@ -124,7 +124,15 @@ class ApprovalService:
             raise ApprovalError("payload_changed", "approved payload differs from the stored payload; execution blocked")
         # re-check business rules against CURRENT state (approvals can go stale)
         with self.db.connect("reader") as reader:
-            change = reader.query_one("SELECT * FROM engineering_changes WHERE change_id = ?", (action["change_id"],))
+            change = reader.query_one(
+                "SELECT * FROM engineering_changes WHERE change_id = ?",
+                (action["change_id"],),
+            )
+            if change is None:
+                raise ApprovalError(
+                    "stale_state",
+                    "associated engineering change no longer exists; execution blocked",
+                )
             try:
                 A.precheck(reader, change, action["action_type"], action["payload"], self.settings.as_of)
             except UnsafeProposal as e:

@@ -1,6 +1,7 @@
 import unittest
 
 from changeguard.agent.loop import AgentConfig, AgentRunner
+from changeguard.agent.report import verify_claims
 from changeguard.errors import LLMError
 from changeguard.llm.base import LLMTurn, ToolCall, Usage
 from changeguard.llm.mock import ScriptedLLM, tc
@@ -148,8 +149,8 @@ class LoopTests(unittest.TestCase):
         turns = [tc("calculate_impact_metrics", {"component_id": "CMP-104", "candidate_component_id": "CMP-109"}),
                  tc("calculate_impact_metrics", {"component_id": "CMP-104"})]
         good = report(outcome="recommendation", recommended_component_id="CMP-109", claims=[
-            {"type": "compliance", "subject": "CMP-109", "value": "eligible_for_review", "evidence": ["S2"]},
-            {"type": "metric", "subject": "CMP-104", "value": 2200, "evidence": ["S4"]},
+            {"type": "other", "subject": "CMP-109 eligibility", "value": "eligible_for_review", "evidence": ["S2"]},
+            {"type": "metric", "subject": "CMP-104 shortage_units", "value": 2200, "evidence": ["S4"]},
             {"type": "metric", "subject": "CMP-104", "value": 9999, "evidence": ["S4"]},  # fabricated number
             {"type": "other", "subject": "CMP-104", "value": "x", "evidence": ["S77"]}])  # nonexistent step
         res = self.run_agent(turns + [tc("submit_report", good)])
@@ -157,6 +158,182 @@ class LoopTests(unittest.TestCase):
         self.assertEqual(res.claim_check["total"], 4)
         self.assertEqual(res.claim_check["supported"], 2)
         self.assertAlmostEqual(res.claim_check["support_rate"], 0.5)
+
+    def test_claim_verification_handles_structured_tool_outputs(self):
+        steps = [
+            {
+                "idx": 2,
+                "kind": "tool",
+                "name": "get_bom_impact",
+                "status": "ok",
+                "output": {
+                    "component_id": "CMP-107",
+                    "affected_ids": [],
+                    "counts": {
+                        "assemblies": 0,
+                        "products": 0,
+                        "total": 0,
+                    },
+                },
+            },
+            {
+                "idx": 4,
+                "kind": "tool",
+                "name": "get_inventory_status",
+                "status": "ok",
+                "output": {
+                    "component_id": "CMP-107",
+                    "stock_data": "unavailable",
+                    "sites": [],
+                    "totals": None,
+                    "issues": [{"code": "stock_unavailable"}],
+                },
+            },
+        ]
+
+        claims = {
+            "claims": [
+                {
+                    "type": "affected_item",
+                    "subject": "CMP-107 assemblies",
+                    "value": 0,
+                    "evidence": ["S2"],
+                },
+                {
+                    "type": "inventory",
+                    "subject": "CMP-107 stock",
+                    "value": "unavailable",
+                    "evidence": ["S4"],
+                },
+                {
+                    "type": "metric",
+                    "subject": "CMP-107 assemblies",
+                    "value": 99,
+                    "evidence": ["S2"],
+                },
+                {
+                    "type": "inventory",
+                    "subject": "CMP-107 stock",
+                    "value": 0,
+                    "evidence": ["S4"],
+                },
+                {
+                    "type": "inventory",
+                    "subject": "CMP-107 stock",
+                    "value": "unavailable",
+                    "evidence": ["S99"],
+                },
+            ]
+        }
+
+        result = verify_claims(claims, steps)
+
+        self.assertEqual(result["total"], 5)
+        self.assertEqual(result["supported"], 2)
+        self.assertAlmostEqual(result["support_rate"], 0.4)
+        self.assertEqual(
+            [item["value"] for item in result["unsupported"]],
+            [99, 0, "unavailable"],
+        )
+
+    def test_claim_verifier_rejects_cross_field_and_wrong_tool_claims(self):
+        steps = [
+            {
+                "idx": 2,
+                "kind": "tool",
+                "name": "calculate_impact_metrics",
+                "status": "ok",
+                "output": {
+                    "component_id": "CMP-104",
+                    "affected_count": {"assemblies": 2, "products": 1, "total": 3},
+                    "exposure": {"units": 500, "status": "known"},
+                    "inventory": {"available_units": 20, "status": "present"},
+                    "shortage_units": 10,
+                    "candidate": {
+                        "component_id": "CMP-109",
+                        "eligibility": "eligible_for_review",
+                    },
+                },
+            },
+            {
+                "idx": 4,
+                "kind": "tool",
+                "name": "get_supplier_options",
+                "status": "ok",
+                "output": {
+                    "component_id": "CMP-104",
+                    "suppliers": [
+                        {
+                            "supplier_id": "SUP-1",
+                            "name": "Northwind Parts",
+                            "status": "active",
+                            "risk_level": "low",
+                            "lead_time_days": 5,
+                            "unit_cost_cents": 125,
+                            "usable": True,
+                        }
+                    ],
+                    "alternates": [],
+                    "issues": [{"code": "no_alternates"}],
+                },
+            },
+        ]
+
+        result = verify_claims(
+            {
+                "claims": [
+                    {"type": "metric", "subject": "CMP-104 shortage_units", "value": 10, "evidence": ["S2"]},
+                    {"type": "metric", "subject": "CMP-104 shortage_units", "value": 20, "evidence": ["S2"]},
+                    {"type": "metric", "subject": "CMP-104 available_units", "value": 20, "evidence": ["S2"]},
+                    {"type": "supplier", "subject": "CMP-104 Northwind Parts status", "value": "active", "evidence": ["S4"]},
+                    {"type": "supplier", "subject": "CMP-104 Northwind Parts status", "value": "low", "evidence": ["S4"]},
+                    {"type": "supplier", "subject": "CMP-104 alternates", "value": "none", "evidence": ["S4"]},
+                    {"type": "compliance", "subject": "CMP-104 compliance", "value": "confirmed", "evidence": ["S2"]},
+                    {"type": "other", "subject": "CMP-109 eligibility", "value": "eligible_for_review", "evidence": ["S2"]},
+                ]
+            },
+            steps,
+        )
+
+        self.assertEqual(result["total"], 8)
+        self.assertEqual(result["supported"], 5)
+        self.assertAlmostEqual(result["support_rate"], 5 / 8)
+
+    def test_compliance_claim_requires_matching_confirmed_requirements(self):
+        step = {
+            "idx": 8,
+            "kind": "tool",
+            "name": "check_compliance",
+            "status": "ok",
+            "output": {
+                "component_id": "CMP-107",
+                "requirements": [
+                    {"requirement_id": "REQ-REACH", "name": "REACH SVHC", "status": "confirmed"},
+                    {"requirement_id": "REQ-ROHS", "name": "RoHS", "status": "confirmed"},
+                ],
+                "summary": {
+                    "confirmed": 2,
+                    "failed": 0,
+                    "not_checked": 0,
+                    "unresolved": 0,
+                },
+            },
+        }
+
+        claims = {
+            "claims": [
+                {"type": "compliance", "subject": "CMP-107 compliance", "value": "confirmed", "evidence": ["S8"]},
+                {"type": "compliance", "subject": "CMP-107 REACH SVHC", "value": "confirmed", "evidence": ["S8"]},
+                {"type": "compliance", "subject": "CMP-107 RoHS", "value": "failed", "evidence": ["S8"]},
+                {"type": "compliance", "subject": "CMP-107 compliance", "value": "confirmed", "evidence": ["S2"]},
+            ]
+        }
+
+        result = verify_claims(claims, [step])
+        self.assertEqual(result["total"], 4)
+        self.assertEqual(result["supported"], 2)
+        self.assertAlmostEqual(result["support_rate"], 0.5)
+
 
     def test_retry_is_transparent_and_traced(self):
         faults = FaultPlan({"get_bom_impact": ["timeout"]})

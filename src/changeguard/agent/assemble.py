@@ -21,7 +21,7 @@ def assemble_report(change, results, evals, pick, drafted) -> dict:
     figs = {"affected_count": bom["data"]["counts"]["total"], "exposure_units": None, "available_units": None, "shortage_units": None}
     unresolved: list[str] = []
     claims = []
-    if base_ok:
+    if base is not None and base.get("status") == "ok":
         m = base["data"]
         figs.update(exposure_units=m["exposure"]["units"], available_units=m["inventory"]["available_units"],
                     shortage_units=m["shortage_units"])
@@ -38,9 +38,17 @@ def assemble_report(change, results, evals, pick, drafted) -> dict:
     for n, _a, c in results:
         if c.get("status") == "error" and n not in ("calculate_impact_metrics",):
             unresolved.append(f"tool_failure:{n}"[:60])
-    for iss in (next((c for n, a, c in results if n == "get_supplier_options" and c.get("status") == "ok"), {}) or {}).get("data", {}).get("issues", []):
-        if iss["code"] in ("single_source", "no_alternates"):
-            unresolved.append(f"{iss['code']}:{cid}")
+    supplier_result = next(
+        (
+            c for n, a, c in results
+            if n == "get_supplier_options" and c.get("status") == "ok"
+        ),
+        None,
+    )
+    if supplier_result is not None:
+        for iss in supplier_result.get("data", {}).get("issues", []):
+            if iss["code"] in ("single_source", "no_alternates"):
+                unresolved.append(f"{iss['code']}:{cid}")
     assess = []
     for cand, e in evals.items():
         assess.append({"component_id": cand, "eligibility": e["eligibility"], "reasons": e["reasons"]})

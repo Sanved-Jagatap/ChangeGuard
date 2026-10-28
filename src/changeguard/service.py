@@ -86,9 +86,17 @@ class ChangeGuardService:
             return
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         with self.db.connect("reader") as r:
-            n = r.query_one("SELECT COUNT(*) AS n FROM agent_runs WHERE runner='agent' AND provider NOT IN ('mock','mock_gullible','none') "
-                            "AND started_at >= ?", (today,))["n"]
-        if int(n) >= self.settings.max_agent_runs_per_day:
+            row = r.query_one(
+                "SELECT COUNT(*) AS n FROM agent_runs "
+                "WHERE runner='agent' AND provider NOT IN ('mock','mock_gullible','none') "
+                "AND started_at >= ?",
+                (today,),
+            )
+        if row is None:
+            raise BudgetExceeded(
+                "unable to verify the daily hosted-model run budget; refusing to start another run"
+            )
+        if int(row["n"]) >= self.settings.max_agent_runs_per_day:
             raise BudgetExceeded(f"daily limit of {self.settings.max_agent_runs_per_day} hosted-model runs reached")
 
     def investigate(self, principal: Principal, change_id: str, runner: str = "agent", provider: str | None = None,
