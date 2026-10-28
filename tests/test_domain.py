@@ -119,6 +119,36 @@ class DomainTests(unittest.TestCase):
         clean = docs.search_documents(self.r, "connector derating")
         self.assertFalse(any(d["flags"] for d in clean["results"]))
 
+
+    def test_docs_filter_unrelated_component_documents(self):
+        cmp104 = docs.search_documents(self.r, "CMP-104 end-of-life notice")
+        self.assertTrue(cmp104["results"])
+        self.assertEqual(cmp104["results"][0]["doc_id"], "DOC-002")
+        self.assertNotIn("DOC-006", [d["doc_id"] for d in cmp104["results"]])
+
+        cmp510 = docs.search_documents(self.r, "CMP-510 last time buy")
+        self.assertTrue(cmp510["results"])
+        self.assertEqual(cmp510["results"][0]["doc_id"], "DOC-006")
+        self.assertNotIn("DOC-002", [d["doc_id"] for d in cmp510["results"]])
+
+    def test_docs_do_not_misattribute_another_components_notice(self):
+        result = docs.search_documents(self.r, "CMP-107 supplier end-of-life notice")
+        result_ids = [document["doc_id"] for document in result["results"]]
+        self.assertNotIn("DOC-002", result_ids)
+        self.assertNotIn("DOC-005", result_ids)
+        self.assertNotIn("DOC-006", result_ids)
+
+    def test_docs_keep_injection_flag_and_untrusted_marker(self):
+        result = docs.search_documents(self.r, "CMP-106 replacement bulletin")
+        flagged = [document for document in result["results"] if document["flags"]]
+        self.assertTrue(flagged)
+        self.assertEqual(flagged[0]["doc_id"], "DOC-005")
+        self.assertEqual(flagged[0]["trust"], "untrusted_reference_text")
+
+    def test_docs_nonpositive_limit_returns_no_results(self):
+        result = docs.search_documents(self.r, "CMP-104 end-of-life notice", limit=0)
+        self.assertEqual(result["results"], [])
+
     def test_data_quality_findings(self):
         found = {(f["check"], f["subject"]) for f in quality.run_checks(self.r, AS_OF)}
         self.assertIn(("impossible_inventory", "CMP-411@SITE-SOUTH"), found)
