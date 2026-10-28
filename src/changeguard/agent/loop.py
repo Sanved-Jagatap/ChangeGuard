@@ -164,6 +164,17 @@ class AgentRunner:
             errs = validate_report(args)
             violations = [] if errs else enforce_constraints(args, trace.steps)
             problems = errs or violations
+            if not problems and args.get("claims") is not None:
+                claim_check = verify_claims(args, trace.steps)
+                unsupported = claim_check["unsupported"]
+                if unsupported:
+                    problems = [
+                        "unsupported claim: "
+                        + str(item.get("subject", ""))
+                        + " = "
+                        + repr(item.get("value"))
+                        for item in unsupported
+                    ]
             if problems:
                 st["report_rejections"] += 1
                 trace.step("guard", "submit_report", input=args, output={"rejected": problems}, status="blocked")

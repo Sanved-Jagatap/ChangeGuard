@@ -80,9 +80,7 @@ class LoopTests(unittest.TestCase):
         res = self.run_agent([
             tc("get_bom_impact", {"component_id": "CMP-104"}),
             tc("submit_report", bad),
-            tc("submit_report", report(claims=[
-                {"type": "metric", "subject": "CMP-104", "value": 2200, "evidence": ["S1"]}
-            ]))
+            tc("submit_report", report())
         ])
         self.assertEqual(res.status, "completed")
         rejected = [
@@ -150,14 +148,52 @@ class LoopTests(unittest.TestCase):
                  tc("calculate_impact_metrics", {"component_id": "CMP-104"})]
         good = report(outcome="recommendation", recommended_component_id="CMP-109", claims=[
             {"type": "other", "subject": "CMP-109 eligibility", "value": "eligible_for_review", "evidence": ["S2"]},
-            {"type": "metric", "subject": "CMP-104 shortage_units", "value": 2200, "evidence": ["S4"]},
-            {"type": "metric", "subject": "CMP-104", "value": 9999, "evidence": ["S4"]},  # fabricated number
-            {"type": "other", "subject": "CMP-104", "value": "x", "evidence": ["S77"]}])  # nonexistent step
+            {"type": "metric", "subject": "CMP-104 shortage_units", "value": 2200, "evidence": ["S4"]}])
         res = self.run_agent(turns + [tc("submit_report", good)])
         self.assertEqual(res.status, "completed")
-        self.assertEqual(res.claim_check["total"], 4)
+        self.assertEqual(res.claim_check["total"], 2)
         self.assertEqual(res.claim_check["supported"], 2)
-        self.assertAlmostEqual(res.claim_check["support_rate"], 0.5)
+        self.assertEqual(res.claim_check["unsupported"], [])
+
+    def test_unsupported_claim_rejected_then_corrected(self):
+        turns = [
+            tc("calculate_impact_metrics", {"component_id": "CMP-104", "candidate_component_id": "CMP-109"}),
+            tc("calculate_impact_metrics", {"component_id": "CMP-104"}),
+        ]
+        bad = report(
+            outcome="recommendation",
+            recommended_component_id="CMP-109",
+            claims=[
+                {"type": "metric", "subject": "CMP-104 shortage_units", "value": 9999, "evidence": ["S4"]}
+            ],
+        )
+        corrected = report(
+            outcome="recommendation",
+            recommended_component_id="CMP-109",
+            claims=[
+                {"type": "metric", "subject": "CMP-104 shortage_units", "value": 2200, "evidence": ["S4"]}
+            ],
+        )
+
+        res = self.run_agent(turns + [
+            tc("submit_report", bad),
+            tc("submit_report", corrected),
+        ])
+
+        self.assertEqual((res.status, res.stop_reason), ("completed", "report_submitted"))
+        self.assertEqual(res.claim_check["total"], 1)
+        self.assertEqual(res.claim_check["supported"], 1)
+        rejected = [
+            step for step in res.steps
+            if step["kind"] == "guard"
+            and step["name"] == "submit_report"
+            and step["status"] == "blocked"
+        ]
+        self.assertTrue(rejected)
+        self.assertTrue(any(
+            "unsupported claim" in str(item)
+            for item in rejected[0]["output"]["rejected"]
+        ))
 
     def test_claim_verification_handles_structured_tool_outputs(self):
         steps = [

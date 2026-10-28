@@ -30,7 +30,7 @@ def assemble_report(change, results, evals, pick, drafted) -> dict:
         if m["inventory"]["status"] == "unavailable":
             unresolved.append(f"stock_unavailable:{cid}")
         if m["shortage_units"] is not None:
-            claims.append({"type": "metric", "subject": cid, "value": m["shortage_units"], "evidence": [base["step_ref"]]})
+            claims.append({"type": "metric", "subject": f"{cid} shortage_units", "value": m["shortage_units"], "evidence": [base["step_ref"]]})
         for _iss in m.get("bom_issues", []):
             unresolved.append(f"data_conflict:{cid}")
     else:
@@ -56,7 +56,7 @@ def assemble_report(change, results, evals, pick, drafted) -> dict:
             unresolved.append(f"{r}:{cand}")
         ref = step_ref.get(("calculate_impact_metrics", cand))
         if ref:
-            claims.append({"type": "compliance", "subject": cand, "value": e["eligibility"], "evidence": [ref]})
+            claims.append({"type": "other", "subject": f"{cand} eligibility", "value": e["eligibility"], "evidence": [ref]})
     um = UNSAFE_REQUEST.search(change["description"])
     refused = [um.group(0)] if um else []
     if pick and base_ok:
