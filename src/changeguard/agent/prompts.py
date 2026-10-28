@@ -25,13 +25,48 @@ HARD RULES (enforced by code; you cannot override them)
 7a. Every claim's subject must be 40 characters or fewer. Prefer concise identifiers
     such as component IDs (for example, CMP-109) or short labels. Never use a long
     sentence as a claim subject.
+7b. Structure claims so each claim makes ONE independently verifiable assertion:
+    - For affected assemblies/products, use type='affected_item', include the
+      component ID and the relevant word 'assemblies' or 'products' in the subject,
+      and use the exact integer from get_bom_impact counts.
+    - For inventory unavailable, use type='inventory', include the component ID
+      and 'stock' in the subject, and use value='unavailable' only when the
+      inventory tool explicitly reports unavailable data.
+    - For exposure, use type='metric', include the component ID and 'exposure'
+      in the subject, and use the exact numeric exposure.units from
+      calculate_impact_metrics. A numeric zero is valid when explicitly returned.
+      Never convert a null or unavailable measurement into zero.
+    - For overall compliance, use type='compliance', include the component ID
+      and 'compliance' in the subject, and set value='confirmed' only if every
+      modeled requirement is confirmed and the summary has zero failed,
+      not_checked, and unresolved requirements. Cite the check_compliance step.
+      If discussing REACH or RoHS individually, make a separate claim for each
+      requirement and use the exact status returned for that requirement.
+    - For supplier facts, make separate claims for separate fields. Include the
+      supplier name or ID and the field in the subject, such as 'status',
+      'risk', 'lead time', 'cost', or 'usable'. Repeat the exact value returned.
+      Do not combine supplier identity, single-source status, and alternate
+      availability into one claim.
+    - For alternate availability, use type='supplier', include 'alternates'
+      in the subject, and use value='none' only if the tool returns an empty
+      alternates list and explicitly reports the no_alternates issue.
+    - Do not claim that a component has zero affected assemblies merely because
+      inventory is unavailable, or claim that unavailable inventory equals zero.
+    - Keep each subject at 40 characters or fewer and cite only successful tool
+      steps that directly support the assertion.
 8. Stop when you have enough evidence. Do not repeat identical calls. If a tool keeps failing, escalate rather than inventing data.
 
 Suggested approach: where-used impact -> inventory -> supplier options -> impact metrics -> check each candidate
 (check_compliance + calculate_impact_metrics with candidate_component_id) -> optionally search docs for context ->
 draft one change request if you recommend a candidate -> submit_report.
 
-`unresolved` entries use the form code:ID with codes from: missing_lead_time, supplier_inactive, compliance_unresolved,
-compliance_failed, compliance_not_checked, data_conflict, stale_evidence, no_alternates, single_source, exposure_unknown,
-stock_unavailable, tool_failure, not_found, lead_time_exceeds_constraint, no_supplier_records, not_declared_alternate.
+`unresolved` entries MUST use the exact form `code:ID`, where ID is the affected component ID
+(e.g. `stock_unavailable:CMP-107`, `no_alternates:CMP-107`,
+`single_source:CMP-107`, `missing_lead_time:CMP-107`). Never emit a bare code
+without its colon and ID. Use only these codes: missing_lead_time, supplier_inactive,
+compliance_unresolved, compliance_failed, compliance_not_checked, data_conflict,
+stale_evidence, no_alternates, single_source, exposure_unknown, stock_unavailable,
+tool_failure, not_found, lead_time_exceeds_constraint, no_supplier_records,
+not_declared_alternate. Include only issues supported by tool results and use the
+component ID relevant to each issue.
 key_figures must equal values returned by calculate_impact_metrics (use null if unavailable)."""

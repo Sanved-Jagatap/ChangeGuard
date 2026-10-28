@@ -200,6 +200,30 @@ class LoopTests(unittest.TestCase):
                     "evidence": ["S2"],
                 },
                 {
+                    "type": "affected_item",
+                    "subject": "CMP-107 assemblies",
+                    "value": "0",
+                    "evidence": ["S2"],
+                },
+                {
+                    "type": "affected_item",
+                    "subject": "CMP-107 assemblies",
+                    "value": "99",
+                    "evidence": ["S2"],
+                },
+                {
+                    "type": "affected_item",
+                    "subject": "CMP-107 assemblies",
+                    "value": "0.5",
+                    "evidence": ["S2"],
+                },
+                {
+                    "type": "affected_item",
+                    "subject": "CMP-107 assemblies",
+                    "value": True,
+                    "evidence": ["S2"],
+                },
+                {
                     "type": "inventory",
                     "subject": "CMP-107 stock",
                     "value": "unavailable",
@@ -228,12 +252,12 @@ class LoopTests(unittest.TestCase):
 
         result = verify_claims(claims, steps)
 
-        self.assertEqual(result["total"], 5)
-        self.assertEqual(result["supported"], 2)
-        self.assertAlmostEqual(result["support_rate"], 0.4)
+        self.assertEqual(result["total"], 9)
+        self.assertEqual(result["supported"], 3)
+        self.assertAlmostEqual(result["support_rate"], 3 / 9)
         self.assertEqual(
             [item["value"] for item in result["unsupported"]],
-            [99, 0, "unavailable"],
+            ["99", "0.5", True, 99, 0, "unavailable"],
         )
 
     def test_claim_verifier_rejects_cross_field_and_wrong_tool_claims(self):

@@ -86,6 +86,31 @@ def _contains_exact_scalar(value: Any, expected: Any) -> bool:
     return value is None and expected is None
 
 
+def _claim_value_matches(value: Any, expected: Any) -> bool:
+    """Match exact numeric values while tolerating numeric strings from LLMs."""
+    if isinstance(expected, bool) or isinstance(value, bool):
+        return type(value) is type(expected) and value == expected
+
+    if isinstance(expected, (int, float)):
+        if isinstance(value, str):
+            candidate = value.strip()
+            if not candidate:
+                return False
+            try:
+                parsed = float(candidate)
+            except ValueError:
+                return False
+            return parsed == expected
+
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value == expected
+        )
+
+    return type(value) is type(expected) and value == expected
+
+
 def _subject_component_matches(subject: str, output: dict) -> bool:
     """If a subject names a component, require that component in the tool output."""
     ids = re.findall(r"\bCMP-[A-Za-z0-9_-]+\b", subject, flags=re.IGNORECASE)
@@ -137,7 +162,7 @@ def _claim_supported_by_step(claim: dict, step: dict) -> bool:
         else:
             expected = counts.get("total")
 
-        return expected is not None and type(expected) is type(value) and expected == value
+        return expected is not None and _claim_value_matches(value, expected)
 
     if claim_type == "inventory":
         if tool_name == "get_inventory_status":
@@ -157,7 +182,7 @@ def _claim_supported_by_step(claim: dict, step: dict) -> bool:
             else:
                 return False
 
-            return expected is not None and type(expected) is type(value) and expected == value
+            return expected is not None and _claim_value_matches(value, expected)
 
         if tool_name == "calculate_impact_metrics":
             inventory = output.get("inventory")
@@ -171,7 +196,7 @@ def _claim_supported_by_step(claim: dict, step: dict) -> bool:
                 return False
 
             expected = inventory.get("available_units")
-            return expected is not None and type(expected) is type(value) and expected == value
+            return expected is not None and _claim_value_matches(value, expected)
 
         return False
 
@@ -200,7 +225,7 @@ def _claim_supported_by_step(claim: dict, step: dict) -> bool:
         else:
             return False
 
-        return expected is not None and type(expected) is type(value) and expected == value
+        return expected is not None and _claim_value_matches(value, expected)
 
     if claim_type == "supplier":
         if tool_name != "get_supplier_options":
